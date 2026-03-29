@@ -1,42 +1,85 @@
-# AutoCat
+# AutoCat — Developer Guide
 
 A lightweight personal AI assistant powered by Claude CLI with Telegram integration, scheduled tasks, and memory system.
 
 ## Project Structure
 
 ```
-cmd/autocat/main.go        - Entry point, orchestrates all components
+cmd/autocat/main.go             Entry point — wires all components, runs event loop
 internal/
-  config/config.go          - Configuration loading from .env with validation
-  db/db.go                  - SQLite database initialization and migrations
-  claude/claude.go          - Claude CLI subprocess invocation
-  telegram/bot.go           - Telegram bot with command handling and chat
-  session/session.go        - Session lifecycle (create, resume, daily reset)
-  memory/memory.go          - Memory storage, retrieval, and auto-extraction
-  scheduler/scheduler.go    - Cron-based task scheduler
-  tasks/templates.go        - Built-in task templates (briefing, stocks, etc.)
-  security/security.go      - Rate limiting, input sanitization, user allowlist
+  config/config.go              .env loading, validation, typed Config struct
+  config/config_test.go         Tests for parsing, defaults, validation edge cases
+  db/db.go                      SQLite init, connection pool, schema migrations
+  claude/claude.go              Claude CLI subprocess invocation (single + multi-turn)
+  telegram/bot.go               Telegram long-polling bot, command router, chat handler
+  telegram/split_test.go        Tests for message chunking logic
+  session/session.go            Session CRUD (transactional create, daily reset)
+  session/session_test.go       Tests with in-memory SQLite
+  memory/memory.go              Memory CRUD, context formatting, Claude-based extraction
+  scheduler/scheduler.go        Cron scheduler with cancellable context and WaitGroup
+  tasks/templates.go            Built-in task templates (briefing, stocks, news, etc.)
+  security/security.go          Rate limiter, input sanitization
+  security/audit.go             Structured audit logging for security events
+  security/security_test.go     Tests for sanitization, rate limiting, stop behavior
+  metrics/metrics.go            JSON /metrics + /health HTTP endpoints
+docs/DEPLOY.md                  Step-by-step deployment guide (EC2, Mac Mini, Docker)
+scripts/
+  autocat.service               Systemd unit file with security hardening
+  setup.sh                      Local setup script
+  deploy.sh                     Cross-compile helper for linux/arm64
 ```
 
 ## Key Design Decisions
 
-- **Claude CLI** is invoked as a subprocess (not via API) — requires `claude` to be installed and authenticated on the host
-- **SQLite** for all persistence (messages, sessions, tasks, memory)
-- **Single binary** — no container isolation, relies on host security + user allowlist
-- **Cron scheduler** uses 6-field cron expressions (with seconds)
-- Messages and code are in English; the assistant responds in the user's language
+1. **Claude CLI as subprocess** — not the Anthropic API. Requires `claude` installed and authenticated on the host (`claude login`). This simplifies auth (OAuth, no API keys) and gives access to Claude CLI features like session resume.
+
+2. **SQLite for everything** — messages, sessions, scheduled tasks, task run logs, memory, personalization. Single file, no external database to manage. Connection pool configured (25 open, 5 idle, 5min lifetime).
+
+3. **Single binary** — `go build` produces one binary. No container isolation. Security relies on the Telegram user allowlist + OS-level permissions.
+
+4. **6-field cron** — uses `robfig/cron/v3` with seconds field enabled. Example: `0 0 8 * * *` = daily at 08:00:00.
+
+5. **Transactional session rotation** — session create (end old + insert new) is wrapped in a SQL transaction to prevent concurrent requests from creating multiple active sessions.
+
+6. **Graceful shutdown** — both the Telegram bot and scheduler track in-flight work via `sync.WaitGroup`. On SIGINT/SIGTERM, the bot stops accepting new messages, waits for handlers to finish, and the scheduler cancels its context and waits for running tasks.
+
+7. **Audit logging** — security-relevant events (unauthorized access, rate limiting, commands) are logged in a structured `[AUDIT]` format for grep-ability.
 
 ## Build & Run
 
 ```bash
-make build    # Build binary
-make run      # Build and run
-make dev      # Run with go run (no build step)
+make build        # CGO_ENABLED=1 go build -o autocat ./cmd/autocat
+make run          # Build then run
+make dev          # go run (no binary)
+make test         # go test ./...
+make lint         # go vet ./...
+
+# Cross-compile for deployment
+make build-linux-arm64
+make build-linux-amd64
 ```
 
 ## Adding Features
 
-- New task templates: add to `internal/tasks/templates.go`
-- New Telegram commands: add case to `handleCommand()` in `internal/telegram/bot.go`
-- New memory categories: just use any string — no enum needed
-- Database schema changes: add to `migrate()` in `internal/db/db.go`
+### New task template
+Add a function to `internal/tasks/templates.go` returning a `Template` struct, and include it in `Builtin()`. It will automatically appear in `/addtask`.
+
+### New Telegram command
+Add a `case` to `handleCommand()` in `internal/telegram/bot.go`. Follow the existing pattern (parse args, call internal logic, reply with `b.replyText`).
+
+### New memory category
+Just use any string as the category in `memory.Save()`. No enum or schema change needed.
+
+### Database schema change
+Add new `CREATE TABLE` or `CREATE INDEX` statements to `migrate()` in `internal/db/db.go`. SQLite `IF NOT EXISTS` makes migrations idempotent.
+
+### New metrics counter
+Add an `atomic.Int64` field to the `Counters` struct in `internal/metrics/metrics.go`, add it to the `snapshot` struct and `Snapshot()` method, then increment with `metrics.Get().YourCounter.Add(1)`.
+
+## Code Conventions
+
+- All code and comments in English
+- The assistant responds in the user's language (controlled via system prompt)
+- Errors: return `fmt.Errorf("context: %w", err)` with wrapping; log at the point of handling, not at every level
+- Logging: `[INFO]`, `[WARN]`, `[ERROR]` prefixes; security events use `[AUDIT]`
+- Tests: table-driven where appropriate, `_test.go` alongside source files
