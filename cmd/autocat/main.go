@@ -40,20 +40,17 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create Telegram bot
-	bot, err := telegram.New(cfg, database, nil) // scheduler set below
+	// Create scheduler first (bot needs it for task management)
+	sched := scheduler.New(database, cfg, nil)
+
+	// Create Telegram bot (pass scheduler; bot's SendMessage wired into scheduler below)
+	bot, err := telegram.New(cfg, database, sched)
 	if err != nil {
 		log.Fatalf("[FATAL] Telegram bot error: %v", err)
 	}
 
-	// Create scheduler with bot's send function
-	sched := scheduler.New(database, cfg, bot.SendMessage)
-
-	// Recreate bot with scheduler
-	bot, err = telegram.New(cfg, database, sched)
-	if err != nil {
-		log.Fatalf("[FATAL] Telegram bot error: %v", err)
-	}
+	// Wire bot's send function into scheduler
+	sched.SetSender(bot.SendMessage)
 
 	// Start scheduler
 	if err := sched.Start(); err != nil {
@@ -92,7 +89,6 @@ func dailyReset(ctx context.Context, cfg *config.Config, database *sql.DB) {
 
 	for {
 		now := time.Now().In(loc)
-		// Calculate next reset time
 		next := time.Date(now.Year(), now.Month(), now.Day(), cfg.DailyResetHour, 0, 0, 0, loc)
 		if !next.After(now) {
 			next = next.Add(24 * time.Hour)

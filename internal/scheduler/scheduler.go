@@ -42,7 +42,7 @@ type Scheduler struct {
 	jobs   map[int64]cron.EntryID // taskID -> cron entryID
 }
 
-// New creates a new Scheduler.
+// New creates a new Scheduler. send may be nil and set later via SetSender.
 func New(db *sql.DB, cfg *config.Config, send MessageSender) *Scheduler {
 	loc, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
@@ -57,6 +57,13 @@ func New(db *sql.DB, cfg *config.Config, send MessageSender) *Scheduler {
 		send: send,
 		jobs: make(map[int64]cron.EntryID),
 	}
+}
+
+// SetSender wires in the message sender after construction (breaks init cycle).
+func (s *Scheduler) SetSender(send MessageSender) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.send = send
 }
 
 // Start loads all enabled tasks and starts the cron scheduler.

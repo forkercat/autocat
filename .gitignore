@@ -4,6 +4,6 @@ data/
 *.db-journal
 *.log
 .DS_Store
-autocat
-autocat-*
+/autocat
+/autocat-*
 .claude/

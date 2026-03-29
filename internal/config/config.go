@@ -10,16 +10,16 @@ import (
 )
 
 type Config struct {
-	TelegramBotToken     string
-	AllowedUsers         []string
-	ClaudeModel          string
-	AssistantName        string
-	Timezone             string
-	DataDir              string
+	TelegramBotToken      string
+	AllowedUsers          []string
+	ClaudeModel           string
+	AssistantName         string
+	Timezone              string
+	DataDir               string
 	MaxConcurrentSessions int
-	SessionIdleTimeout   int
-	DailyResetHour       int
-	Debug                bool
+	SessionIdleTimeout    int
+	DailyResetHour        int
+	Debug                 bool
 }
 
 func Load() (*Config, error) {
@@ -38,16 +38,16 @@ func Load() (*Config, error) {
 	allowed := parseCSV(allowedRaw)
 
 	cfg := &Config{
-		TelegramBotToken:     token,
-		AllowedUsers:         allowed,
-		ClaudeModel:          envOrDefault("CLAUDE_MODEL", "claude-sonnet-4-6"),
-		AssistantName:        envOrDefault("ASSISTANT_NAME", "AutoCat"),
-		Timezone:             envOrDefault("TIMEZONE", "Asia/Shanghai"),
-		DataDir:              envOrDefault("DATA_DIR", "./data"),
+		TelegramBotToken:      token,
+		AllowedUsers:          allowed,
+		ClaudeModel:           envOrDefault("CLAUDE_MODEL", "claude-sonnet-4-6"),
+		AssistantName:         envOrDefault("ASSISTANT_NAME", "AutoCat"),
+		Timezone:              envOrDefault("TIMEZONE", "Asia/Shanghai"),
+		DataDir:               envOrDefault("DATA_DIR", "./data"),
 		MaxConcurrentSessions: envOrDefaultInt("MAX_CONCURRENT_SESSIONS", 2),
-		SessionIdleTimeout:   envOrDefaultInt("SESSION_IDLE_TIMEOUT", 300),
-		DailyResetHour:       envOrDefaultInt("DAILY_RESET_HOUR", 4),
-		Debug:                envOrDefault("DEBUG", "false") == "true",
+		SessionIdleTimeout:    envOrDefaultInt("SESSION_IDLE_TIMEOUT", 300),
+		DailyResetHour:        envOrDefaultInt("DAILY_RESET_HOUR", 4),
+		Debug:                 envOrDefault("DEBUG", "false") == "true",
 	}
 
 	if cfg.ClaudeModel != "claude-sonnet-4-6" && cfg.ClaudeModel != "claude-opus-4-6" {
