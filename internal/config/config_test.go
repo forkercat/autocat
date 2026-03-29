@@ -70,8 +70,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.AssistantName != "AutoCat" {
 		t.Errorf("expected default name AutoCat, got %s", cfg.AssistantName)
 	}
-	if cfg.Timezone != "Asia/Shanghai" {
-		t.Errorf("expected default timezone Asia/Shanghai, got %s", cfg.Timezone)
+	if cfg.Timezone != "America/Los_Angeles" {
+		t.Errorf("expected default timezone America/Los_Angeles, got %s", cfg.Timezone)
 	}
 	if cfg.DailyResetHour != 4 {
 		t.Errorf("expected default reset hour 4, got %d", cfg.DailyResetHour)

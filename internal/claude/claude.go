@@ -21,10 +21,15 @@ type Response struct {
 // Invoke calls the Claude CLI with the given prompt.
 // Requires `claude` CLI to be installed and authenticated on the host.
 func Invoke(ctx context.Context, cfg *config.Config, opts InvokeOptions) (*Response, error) {
+	model := opts.Model
+	if model == "" {
+		model = cfg.ClaudeModel
+	}
+
 	args := []string{
 		"--print",
 		"--output-format", "json",
-		"--model", cfg.ClaudeModel,
+		"--model", model,
 		"--max-turns", fmt.Sprintf("%d", opts.MaxTurns),
 	}
 
@@ -96,6 +101,7 @@ type InvokeOptions struct {
 	Prompt       string
 	SystemPrompt string
 	SessionID    string
+	Model        string // overrides cfg.ClaudeModel if set
 	MaxTurns     int
 	Timeout      time.Duration
 }

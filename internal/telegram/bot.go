@@ -14,11 +14,14 @@ import (
 
 	"github.com/forkercat/autocat/internal/claude"
 	"github.com/forkercat/autocat/internal/config"
+	"github.com/forkercat/autocat/internal/gws"
 	"github.com/forkercat/autocat/internal/memory"
 	"github.com/forkercat/autocat/internal/metrics"
+	"github.com/forkercat/autocat/internal/personalize"
 	"github.com/forkercat/autocat/internal/scheduler"
 	"github.com/forkercat/autocat/internal/security"
 	"github.com/forkercat/autocat/internal/session"
+	"github.com/forkercat/autocat/internal/skills"
 	"github.com/forkercat/autocat/internal/tasks"
 )
 
@@ -29,9 +32,10 @@ type Bot struct {
 	db          *sql.DB
 	scheduler   *scheduler.Scheduler
 	rateLimiter *security.RateLimiter
-	mu          sync.Mutex
-	activeLocks map[string]bool // chatID -> processing
-	wg          sync.WaitGroup
+	mu             sync.Mutex
+	activeLocks    map[string]bool   // chatID -> processing
+	modelOverrides map[string]string // chatID -> model override
+	wg             sync.WaitGroup
 }
 
 // New creates a new Telegram bot.
@@ -49,8 +53,9 @@ func New(cfg *config.Config, db *sql.DB, sched *scheduler.Scheduler) (*Bot, erro
 		cfg:         cfg,
 		db:          db,
 		scheduler:   sched,
-		rateLimiter: security.NewRateLimiter(),
-		activeLocks: make(map[string]bool),
+		rateLimiter:    security.NewRateLimiter(),
+		activeLocks:    make(map[string]bool),
+		modelOverrides: make(map[string]string),
 	}, nil
 }
 
@@ -152,16 +157,23 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message, chatID, 
 
 	switch cmd {
 	case "/start":
-		b.replyText(msg.Chat.ID, fmt.Sprintf(
+		help := fmt.Sprintf(
 			"Hi! I'm %s, your personal AI assistant.\n\nCommands:\n"+
 				"/new - Start a new session\n"+
+				"/model - Switch model (sonnet/opus)\n"+
+				"/skill - Use a skill (translate, summarize...)\n"+
+				"/instructions - Set custom instructions\n"+
 				"/tasks - List scheduled tasks\n"+
 				"/addtask - Add a task from templates\n"+
 				"/memory - View recent memories\n"+
 				"/status - Show bot status\n"+
 				"/help - Show this help",
 			b.cfg.AssistantName,
-		))
+		)
+		if b.cfg.GWSEnabled {
+			help += "\n\nGoogle Workspace:\n/gmail - Inbox triage\n/calendar - Today's agenda\n/gtasks - Task list"
+		}
+		b.replyText(msg.Chat.ID, help)
 
 	case "/new":
 		_, err := session.Create(b.db, chatID)
@@ -265,14 +277,155 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message, chatID, 
 		}
 		b.replyText(msg.Chat.ID, fmt.Sprintf(
 			"Status:\n- Model: %s\n- Session: %s\n- Active tasks: %d\n- Timezone: %s",
-			b.cfg.ClaudeModel, sessID, taskCount, b.cfg.Timezone,
+			b.effectiveModel(chatID), sessID, taskCount, b.cfg.Timezone,
 		))
 
+	case "/gmail":
+		if !b.cfg.GWSEnabled {
+			b.replyText(msg.Chat.ID, "Google Workspace integration is not enabled. Set GWS_ENABLED=true in .env.")
+			return
+		}
+		typing := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
+		b.api.Send(typing)
+
+		raw, err := gws.GmailTriage(ctx)
+		if err != nil {
+			b.replyText(msg.Chat.ID, fmt.Sprintf("Failed to fetch Gmail: %v", err))
+			return
+		}
+		b.summarizeAndReply(ctx, msg, chatID, raw, "Summarize this Gmail inbox triage into a concise, readable format. Group by importance. Use the user's language.")
+
+	case "/calendar", "/cal":
+		if !b.cfg.GWSEnabled {
+			b.replyText(msg.Chat.ID, "Google Workspace integration is not enabled. Set GWS_ENABLED=true in .env.")
+			return
+		}
+		typing := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
+		b.api.Send(typing)
+
+		raw, err := gws.CalendarAgenda(ctx, b.cfg.Timezone)
+		if err != nil {
+			b.replyText(msg.Chat.ID, fmt.Sprintf("Failed to fetch calendar: %v", err))
+			return
+		}
+		b.summarizeAndReply(ctx, msg, chatID, raw, "Summarize today's calendar events into a concise schedule. Highlight any conflicts or important meetings. Use the user's language.")
+
+	case "/gtasks":
+		if !b.cfg.GWSEnabled {
+			b.replyText(msg.Chat.ID, "Google Workspace integration is not enabled. Set GWS_ENABLED=true in .env.")
+			return
+		}
+		typing := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
+		b.api.Send(typing)
+
+		raw, err := gws.TasksList(ctx)
+		if err != nil {
+			b.replyText(msg.Chat.ID, fmt.Sprintf("Failed to fetch tasks: %v", err))
+			return
+		}
+		b.summarizeAndReply(ctx, msg, chatID, raw, "Summarize these Google Tasks into a clear, organized to-do list. Use the user's language.")
+
+	case "/instructions", "/inst":
+		if len(parts) < 2 {
+			current, err := personalize.GetInstructions(b.db, chatID)
+			if err != nil {
+				b.replyText(msg.Chat.ID, "Failed to load instructions.")
+				return
+			}
+			if current == "" {
+				b.replyText(msg.Chat.ID, "No custom instructions set.\n\nUsage:\n/instructions <text> — set instructions\n/instructions clear — remove instructions\n\nExample:\n/instructions Always respond in English. I'm a senior Go developer working on backend services.")
+				return
+			}
+			b.replyText(msg.Chat.ID, fmt.Sprintf("Current instructions:\n\n%s\n\nUse /instructions clear to remove.", current))
+			return
+		}
+
+		arg := strings.TrimSpace(text[len(parts[0]):])
+		if strings.ToLower(arg) == "clear" {
+			if err := personalize.ClearInstructions(b.db, chatID); err != nil {
+				b.replyText(msg.Chat.ID, "Failed to clear instructions.")
+				return
+			}
+			b.replyText(msg.Chat.ID, "Custom instructions cleared.")
+			return
+		}
+
+		if err := personalize.SetInstructions(b.db, chatID, arg); err != nil {
+			b.replyText(msg.Chat.ID, "Failed to save instructions.")
+			return
+		}
+		b.replyText(msg.Chat.ID, "Instructions saved! They will be included in all future messages.")
+
+	case "/skill":
+		if len(parts) < 2 {
+			available := skills.Builtin()
+			var sb strings.Builder
+			sb.WriteString("Available skills:\n\n")
+			for _, s := range available {
+				sb.WriteString(fmt.Sprintf("/%s (/%s) — %s\n", s.Name, s.Alias, s.Description))
+			}
+			sb.WriteString("\nUsage: /skill <name> <input>\nOr use the alias directly: /tr hello world")
+			b.replyText(msg.Chat.ID, sb.String())
+			return
+		}
+
+		skillName := parts[1]
+		skill := skills.Find(skillName)
+		if skill == nil {
+			b.replyText(msg.Chat.ID, fmt.Sprintf("Unknown skill: %s. Use /skill to see available skills.", skillName))
+			return
+		}
+
+		if len(parts) < 3 {
+			b.replyText(msg.Chat.ID, fmt.Sprintf("Usage: /skill %s <input>", skill.Name))
+			return
+		}
+
+		input := strings.TrimSpace(text[len(parts[0])+1+len(parts[1]):])
+		b.invokeSkill(ctx, msg, chatID, skill, input)
+
+	case "/model":
+		b.mu.Lock()
+		current := b.modelOverrides[chatID]
+		b.mu.Unlock()
+		if current == "" {
+			current = b.cfg.ClaudeModel
+		}
+
+		if len(parts) < 2 {
+			other := "claude-opus-4-6"
+			if current == "claude-opus-4-6" {
+				other = "claude-sonnet-4-6"
+			}
+			b.replyText(msg.Chat.ID, fmt.Sprintf("Current model: %s\n\nSwitch with: /model %s", current, other))
+			return
+		}
+
+		target := parts[1]
+		// Allow short aliases
+		switch strings.ToLower(target) {
+		case "sonnet", "claude-sonnet-4-6":
+			target = "claude-sonnet-4-6"
+		case "opus", "claude-opus-4-6":
+			target = "claude-opus-4-6"
+		default:
+			b.replyText(msg.Chat.ID, "Usage: /model sonnet or /model opus")
+			return
+		}
+
+		b.mu.Lock()
+		b.modelOverrides[chatID] = target
+		b.mu.Unlock()
+		b.replyText(msg.Chat.ID, fmt.Sprintf("Model switched to %s", target))
+
 	case "/help":
-		b.replyText(msg.Chat.ID, fmt.Sprintf(
+		help := fmt.Sprintf(
 			"%s Commands:\n\n"+
 				"/start - Welcome message\n"+
 				"/new - Start a new session\n"+
+				"/model - Switch model (sonnet/opus)\n"+
+				"/skill - List available skills\n"+
+				"/instructions - Set custom instructions\n"+
 				"/tasks - List scheduled tasks\n"+
 				"/addtask - Show task templates\n"+
 				"/enable <n> - Enable a task template\n"+
@@ -282,9 +435,24 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message, chatID, 
 				"/help - Show this help\n\n"+
 				"Or just send me a message to chat!",
 			b.cfg.AssistantName,
-		))
+		)
+		if b.cfg.GWSEnabled {
+			help += "\n\nGoogle Workspace:\n/gmail - Inbox triage\n/calendar (/cal) - Today's agenda\n/gtasks - Task list"
+		}
+		b.replyText(msg.Chat.ID, help)
 
 	default:
+		// Check if the command matches a skill name or alias
+		skillName := strings.TrimPrefix(cmd, "/")
+		if skill := skills.Find(skillName); skill != nil {
+			if len(parts) < 2 {
+				b.replyText(msg.Chat.ID, fmt.Sprintf("Usage: /%s <input>\n\n%s", skillName, skill.Description))
+				return
+			}
+			input := strings.TrimSpace(text[len(parts[0]):])
+			b.invokeSkill(ctx, msg, chatID, skill, input)
+			return
+		}
 		b.replyText(msg.Chat.ID, "Unknown command. Use /help to see available commands.")
 	}
 }
@@ -323,20 +491,32 @@ func (b *Bot) handleChat(ctx context.Context, msg *tgbotapi.Message, chatID, tex
 	// Store user message
 	b.storeMessage(chatID, strconv.FormatInt(msg.From.ID, 10), msg.From.FirstName, text, "user", sess.ID)
 
-	// Build system prompt with memory context
+	// Build system prompt with memory context and custom instructions
 	memCtx := memory.FormatForContext(b.db, chatID, 20)
-	systemPrompt := fmt.Sprintf(
-		"You are %s, a helpful personal AI assistant. Today is %s. Be concise, friendly, and helpful. Respond in the same language the user uses.\n\n%s",
+	customInst, _ := personalize.GetInstructions(b.db, chatID)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(
+		"You are %s, a helpful personal AI assistant. Today is %s. Be concise, friendly, and helpful. Respond in the same language the user uses.",
 		b.cfg.AssistantName,
 		time.Now().Format("2006-01-02 (Monday)"),
-		memCtx,
-	)
+	))
+	if customInst != "" {
+		sb.WriteString("\n\n## Custom instructions\n\n")
+		sb.WriteString(customInst)
+	}
+	if memCtx != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(memCtx)
+	}
+	systemPrompt := sb.String()
 
 	// Invoke Claude
 	m := metrics.Get()
 	m.ClaudeInvocations.Add(1)
 
 	opts := claude.DefaultMultiTurn(text, systemPrompt, "")
+	opts.Model = b.effectiveModel(chatID)
 	if sess.ClaudeSessionID.Valid {
 		opts.SessionID = sess.ClaudeSessionID.String
 	}
@@ -366,6 +546,80 @@ func (b *Bot) handleChat(ctx context.Context, msg *tgbotapi.Message, chatID, tex
 	// Send response
 	m.MessagesSent.Add(1)
 	b.SendMessage(chatID, resp.Text)
+}
+
+func (b *Bot) summarizeAndReply(ctx context.Context, msg *tgbotapi.Message, chatID, rawData, instruction string) {
+	if strings.TrimSpace(rawData) == "" {
+		b.replyText(msg.Chat.ID, "No data returned.")
+		return
+	}
+
+	prompt := fmt.Sprintf("%s\n\nRaw data:\n---\n%s\n---", instruction, rawData)
+
+	m := metrics.Get()
+	m.ClaudeInvocations.Add(1)
+
+	opts := claude.DefaultSingleTurn(prompt, "")
+	opts.Model = b.effectiveModel(chatID)
+
+	resp, err := claude.Invoke(ctx, b.cfg, opts)
+	if err != nil || resp.Error != "" {
+		m.ClaudeErrors.Add(1)
+		// Fallback: send raw data truncated
+		b.SendMessage(chatID, truncateText(rawData, 3000))
+		return
+	}
+
+	m.MessagesSent.Add(1)
+	b.SendMessage(chatID, resp.Text)
+}
+
+func truncateText(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "\n\n...(truncated)"
+}
+
+func (b *Bot) invokeSkill(ctx context.Context, msg *tgbotapi.Message, chatID string, skill *skills.Skill, input string) {
+	// Send typing indicator
+	typing := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
+	b.api.Send(typing)
+
+	prompt := strings.Replace(skill.Prompt, "{input}", input, 1)
+
+	m := metrics.Get()
+	m.ClaudeInvocations.Add(1)
+
+	opts := claude.DefaultSingleTurn(prompt, "")
+	opts.Model = b.effectiveModel(chatID)
+
+	resp, err := claude.Invoke(ctx, b.cfg, opts)
+	if err != nil {
+		m.ClaudeErrors.Add(1)
+		log.Printf("[ERROR] Skill %s invocation failed: %v", skill.Name, err)
+		b.replyText(msg.Chat.ID, "Sorry, skill execution failed. Please try again.")
+		return
+	}
+	if resp.Error != "" {
+		m.ClaudeErrors.Add(1)
+		log.Printf("[ERROR] Skill %s error: %s", skill.Name, resp.Error)
+		b.replyText(msg.Chat.ID, "Sorry, skill execution encountered an error.")
+		return
+	}
+
+	m.MessagesSent.Add(1)
+	b.SendMessage(chatID, resp.Text)
+}
+
+func (b *Bot) effectiveModel(chatID string) string {
+	b.mu.Lock()
+	m := b.modelOverrides[chatID]
+	b.mu.Unlock()
+	if m != "" {
+		return m
+	}
+	return b.cfg.ClaudeModel
 }
 
 func (b *Bot) storeMessage(chatID, sender, senderName, content, role, sessionID string) {

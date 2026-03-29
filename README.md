@@ -35,6 +35,9 @@ Claude CLI runs as a subprocess — not via API. This means you authenticate onc
 - **Memory System** — automatic extraction of key facts from conversations; memories are injected into future prompts as context
 - **Session Management** — sessions auto-rotate daily at a configurable hour; each session preserves Claude CLI resume capability
 - **Security** — Telegram user allowlist, per-user rate limiting (30 req/min), input sanitization, structured audit logging
+- **Google Workspace** — optional integration via `gws` CLI for Gmail inbox triage, Google Calendar agenda, and Google Tasks (auto-injected into daily briefings)
+- **Skills** — reusable prompt templates (`/tr`, `/sum`, `/cr`, `/eli5`, etc.) for common tasks
+- **Custom Instructions** — per-chat personalized instructions injected into every prompt
 - **Observability** — JSON metrics endpoint (`/metrics`) and health check (`/health`) on a configurable HTTP port
 - **Single Binary** — one `go build`, one binary, zero runtime dependencies beyond Claude CLI and SQLite
 
@@ -64,11 +67,12 @@ All configuration is via environment variables or a `.env` file in the working d
 | `ALLOWED_TELEGRAM_USERS` | Comma-separated Telegram user IDs allowed to interact | *required* |
 | `CLAUDE_MODEL` | `claude-sonnet-4-6` or `claude-opus-4-6` | `claude-sonnet-4-6` |
 | `ASSISTANT_NAME` | Display name used in prompts and greetings | `AutoCat` |
-| `TIMEZONE` | IANA timezone for cron schedules and daily reset | `Asia/Shanghai` |
+| `TIMEZONE` | IANA timezone for cron schedules and daily reset | `America/Los_Angeles` |
 | `DATA_DIR` | Directory for SQLite database | `./data` |
 | `DAILY_RESET_HOUR` | Hour (0-23) to auto-end all sessions | `4` |
 | `MAX_CONCURRENT_SESSIONS` | Max parallel Claude CLI invocations | `2` |
 | `SESSION_IDLE_TIMEOUT` | Session idle timeout in seconds | `300` |
+| `GWS_ENABLED` | Enable Google Workspace CLI integration | `false` |
 | `METRICS_ADDR` | Address for metrics/health HTTP server | `:9090` |
 | `DEBUG` | Enable verbose logging | `false` |
 
@@ -78,6 +82,9 @@ All configuration is via environment variables or a `.env` file in the working d
 |---|---|
 | `/start` | Welcome message and command list |
 | `/new` | End current session and start a fresh one |
+| `/model` | Switch model mid-session (`/model sonnet` or `/model opus`) |
+| `/skill` | List and invoke skills (`/skill translate hello` or `/tr hello`) |
+| `/instructions` | Set custom instructions injected into every prompt |
 | `/tasks` | List all scheduled tasks with status |
 | `/addtask` | Show available task templates |
 | `/enable <n>` | Enable a built-in task template by number |
@@ -100,6 +107,54 @@ Any non-command message is sent to Claude as a chat message within the current s
 | 6 | Memory Extract | 11:00 PM daily | Consolidate key facts from today's conversations |
 
 All times are in your configured `TIMEZONE`. Cron expressions use 6 fields (with seconds).
+
+## Built-in Skills
+
+Skills are reusable prompt templates invoked on demand. Use `/skill` to list them, or invoke directly via alias:
+
+| Skill | Alias | Description |
+|---|---|---|
+| `translate` | `/tr` | Translate between Chinese and English |
+| `summarize` | `/sum` | Summarize text into key points |
+| `explain` | `/eli5` | Explain a concept simply |
+| `codereview` | `/cr` | Review code for issues |
+| `rewrite` | `/rw` | Rewrite text for clarity |
+| `bullets` | `/bp` | Convert text to bullet points |
+
+Example: `/tr What is the meaning of life?` or `/skill translate What is the meaning of life?`
+
+## Custom Instructions
+
+Set per-chat instructions that are injected into every Claude prompt:
+
+```
+/instructions Always respond in English. I'm a senior Go developer.
+/instructions clear    # remove instructions
+/instructions          # view current instructions
+```
+
+## Google Workspace Integration
+
+Optional integration with Gmail, Google Calendar, and Google Tasks via the [Google Workspace CLI (`gws`)](https://github.com/googleworkspace/cli).
+
+**Setup:**
+
+```bash
+npm install -g @googleworkspace/cli
+gws auth login
+```
+
+Then set `GWS_ENABLED=true` in `.env`.
+
+**Commands:**
+
+| Command | Description |
+|---|---|
+| `/gmail` | Inbox triage — unread email summary |
+| `/calendar` (`/cal`) | Today's agenda |
+| `/gtasks` | Google Tasks list |
+
+GWS data is also automatically injected into the **daily briefing** and **weekly finance** scheduled tasks when enabled.
 
 ## Deployment
 

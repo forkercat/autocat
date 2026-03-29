@@ -11,6 +11,7 @@ import (
 
 	"github.com/forkercat/autocat/internal/config"
 	"github.com/forkercat/autocat/internal/db"
+	"github.com/forkercat/autocat/internal/gws"
 	"github.com/forkercat/autocat/internal/memory"
 	"github.com/forkercat/autocat/internal/metrics"
 	"github.com/forkercat/autocat/internal/scheduler"
@@ -27,7 +28,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("[FATAL] Configuration error: %v", err)
 	}
-	log.Printf("[INFO] Config loaded: model=%s, timezone=%s", cfg.ClaudeModel, cfg.Timezone)
+	log.Printf("[INFO] Config loaded: model=%s, timezone=%s, gws=%v", cfg.ClaudeModel, cfg.Timezone, cfg.GWSEnabled)
+	if cfg.GWSEnabled {
+		if gws.IsInstalled() {
+			log.Printf("[INFO] Google Workspace CLI (gws) detected")
+		} else {
+			log.Printf("[WARN] GWS_ENABLED=true but `gws` CLI not found in PATH")
+		}
+	}
 
 	// Initialize database
 	database, err := db.Init(cfg.DataDir)

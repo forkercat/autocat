@@ -19,6 +19,7 @@ type Config struct {
 	MaxConcurrentSessions int
 	SessionIdleTimeout    int
 	DailyResetHour        int
+	GWSEnabled            bool
 	Debug                 bool
 }
 
@@ -42,11 +43,12 @@ func Load() (*Config, error) {
 		AllowedUsers:          allowed,
 		ClaudeModel:           envOrDefault("CLAUDE_MODEL", "claude-sonnet-4-6"),
 		AssistantName:         envOrDefault("ASSISTANT_NAME", "AutoCat"),
-		Timezone:              envOrDefault("TIMEZONE", "Asia/Shanghai"),
+		Timezone:              envOrDefault("TIMEZONE", "America/Los_Angeles"),
 		DataDir:               envOrDefault("DATA_DIR", "./data"),
 		MaxConcurrentSessions: envOrDefaultInt("MAX_CONCURRENT_SESSIONS", 2),
 		SessionIdleTimeout:    envOrDefaultInt("SESSION_IDLE_TIMEOUT", 300),
 		DailyResetHour:        envOrDefaultInt("DAILY_RESET_HOUR", 4),
+		GWSEnabled:            envOrDefault("GWS_ENABLED", "false") == "true",
 		Debug:                 envOrDefault("DEBUG", "false") == "true",
 	}
 

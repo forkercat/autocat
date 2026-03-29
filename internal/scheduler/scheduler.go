@@ -12,6 +12,7 @@ import (
 
 	"github.com/forkercat/autocat/internal/claude"
 	"github.com/forkercat/autocat/internal/config"
+	"github.com/forkercat/autocat/internal/gws"
 	"github.com/forkercat/autocat/internal/memory"
 	"github.com/forkercat/autocat/internal/metrics"
 )
@@ -198,13 +199,21 @@ func (s *Scheduler) executeTask(task Task) {
 	}
 	runID, _ := runResult.LastInsertId()
 
-	// Build context with memories
+	// Build context with memories and optional GWS data
 	memCtx := memory.FormatForContext(s.db, task.ChatID, 20)
 	systemPrompt := fmt.Sprintf("You are %s, a personal AI assistant. Today is %s.\n\n%s",
 		s.cfg.AssistantName,
 		time.Now().Format("2006-01-02 (Monday)"),
 		memCtx,
 	)
+
+	// Inject GWS context for briefing-related tasks
+	if s.cfg.GWSEnabled && gws.IsInstalled() && isBriefingTask(task.Name) {
+		gwsCtx := s.fetchGWSContext()
+		if gwsCtx != "" {
+			systemPrompt += "\n\n" + gwsCtx
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 	defer cancel()
@@ -279,6 +288,45 @@ func (s *Scheduler) queryTasks(query string, args ...any) ([]Task, error) {
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
+}
+
+// isBriefingTask returns true if the task name suggests it needs GWS context.
+func isBriefingTask(name string) bool {
+	switch name {
+	case "daily-briefing", "weekly-finance":
+		return true
+	}
+	return false
+}
+
+// fetchGWSContext gathers Gmail, Calendar, and Tasks data for injection into prompts.
+func (s *Scheduler) fetchGWSContext() string {
+	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
+	defer cancel()
+
+	var parts []string
+
+	if agenda, err := gws.CalendarAgenda(ctx, s.cfg.Timezone); err == nil && agenda != "" {
+		parts = append(parts, "## Today's Calendar\n\n"+agenda)
+	}
+
+	if inbox, err := gws.GmailTriage(ctx); err == nil && inbox != "" {
+		parts = append(parts, "## Inbox Summary\n\n"+inbox)
+	}
+
+	if tasks, err := gws.TasksList(ctx); err == nil && tasks != "" {
+		parts = append(parts, "## Google Tasks\n\n"+tasks)
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	result := "# Google Workspace Context\n\n"
+	for _, p := range parts {
+		result += p + "\n\n"
+	}
+	return result
 }
 
 func truncate(s string, n int) string {

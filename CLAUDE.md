@@ -16,6 +16,9 @@ internal/
   session/session.go            Session CRUD (transactional create, daily reset)
   session/session_test.go       Tests with in-memory SQLite
   memory/memory.go              Memory CRUD, context formatting, Claude-based extraction
+  personalize/personalize.go    Per-chat custom instructions (CRUD on personalization table)
+  skills/skills.go              Built-in reusable prompt templates (translate, summarize, etc.)
+  gws/gws.go                    Google Workspace CLI (gws) subprocess wrapper
   scheduler/scheduler.go        Cron scheduler with cancellable context and WaitGroup
   tasks/templates.go            Built-in task templates (briefing, stocks, news, etc.)
   security/security.go          Rate limiter, input sanitization
@@ -45,6 +48,8 @@ scripts/
 
 7. **Audit logging** — security-relevant events (unauthorized access, rate limiting, commands) are logged in a structured `[AUDIT]` format for grep-ability.
 
+8. **External CLIs as subprocess** — both Claude CLI and Google Workspace CLI (`gws`) are invoked as subprocesses. GWS integration is opt-in (`GWS_ENABLED=true`) and gracefully degrades if `gws` is not installed.
+
 ## Build & Run
 
 ```bash
@@ -72,6 +77,12 @@ Just use any string as the category in `memory.Save()`. No enum or schema change
 
 ### Database schema change
 Add new `CREATE TABLE` or `CREATE INDEX` statements to `migrate()` in `internal/db/db.go`. SQLite `IF NOT EXISTS` makes migrations idempotent.
+
+### New skill
+Add a function to `internal/skills/skills.go` returning a `Skill` struct, and include it in `Builtin()`. Use `{input}` as the placeholder in the prompt template. It will be auto-discovered by `/skill` and as a direct command alias.
+
+### New GWS command
+Add a wrapper function to `internal/gws/gws.go`, then add a `case` to `handleCommand()` in `bot.go` guarded by `b.cfg.GWSEnabled`. Use `b.summarizeAndReply()` to pass raw gws output through Claude for formatting.
 
 ### New metrics counter
 Add an `atomic.Int64` field to the `Counters` struct in `internal/metrics/metrics.go`, add it to the `snapshot` struct and `Snapshot()` method, then increment with `metrics.Get().YourCounter.Add(1)`.

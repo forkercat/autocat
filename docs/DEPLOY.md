@@ -124,7 +124,7 @@ Recommended additional settings:
 ```env
 CLAUDE_MODEL=claude-sonnet-4-6
 ASSISTANT_NAME=AutoCat
-TIMEZONE=Asia/Shanghai
+TIMEZONE=America/Los_Angeles
 DATA_DIR=/home/ubuntu/autocat/data
 DAILY_RESET_HOUR=4
 METRICS_ADDR=:9090
