@@ -10,10 +10,10 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"github.com/wjunhao/autocat/internal/claude"
-	"github.com/wjunhao/autocat/internal/config"
-	"github.com/wjunhao/autocat/internal/memory"
-	"github.com/wjunhao/autocat/internal/metrics"
+	"github.com/forkercat/autocat/internal/claude"
+	"github.com/forkercat/autocat/internal/config"
+	"github.com/forkercat/autocat/internal/memory"
+	"github.com/forkercat/autocat/internal/metrics"
 )
 
 // MessageSender is a function that sends a message to a chat.

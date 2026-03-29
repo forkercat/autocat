@@ -1,4 +1,4 @@
-module github.com/wjunhao/autocat
+module github.com/forkercat/autocat
 
 go 1.22
 

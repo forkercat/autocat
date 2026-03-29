@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/wjunhao/autocat/internal/config"
+	"github.com/forkercat/autocat/internal/config"
 )
 
 // Response holds the result of a Claude CLI invocation.

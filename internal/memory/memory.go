@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wjunhao/autocat/internal/claude"
-	"github.com/wjunhao/autocat/internal/config"
+	"github.com/forkercat/autocat/internal/claude"
+	"github.com/forkercat/autocat/internal/config"
 )
 
 // Entry represents a memory record.

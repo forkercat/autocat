@@ -9,13 +9,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wjunhao/autocat/internal/config"
-	"github.com/wjunhao/autocat/internal/db"
-	"github.com/wjunhao/autocat/internal/memory"
-	"github.com/wjunhao/autocat/internal/metrics"
-	"github.com/wjunhao/autocat/internal/scheduler"
-	"github.com/wjunhao/autocat/internal/session"
-	"github.com/wjunhao/autocat/internal/telegram"
+	"github.com/forkercat/autocat/internal/config"
+	"github.com/forkercat/autocat/internal/db"
+	"github.com/forkercat/autocat/internal/memory"
+	"github.com/forkercat/autocat/internal/metrics"
+	"github.com/forkercat/autocat/internal/scheduler"
+	"github.com/forkercat/autocat/internal/session"
+	"github.com/forkercat/autocat/internal/telegram"
 )
 
 func main() {

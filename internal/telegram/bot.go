@@ -12,14 +12,14 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"github.com/wjunhao/autocat/internal/claude"
-	"github.com/wjunhao/autocat/internal/config"
-	"github.com/wjunhao/autocat/internal/memory"
-	"github.com/wjunhao/autocat/internal/metrics"
-	"github.com/wjunhao/autocat/internal/scheduler"
-	"github.com/wjunhao/autocat/internal/security"
-	"github.com/wjunhao/autocat/internal/session"
-	"github.com/wjunhao/autocat/internal/tasks"
+	"github.com/forkercat/autocat/internal/claude"
+	"github.com/forkercat/autocat/internal/config"
+	"github.com/forkercat/autocat/internal/memory"
+	"github.com/forkercat/autocat/internal/metrics"
+	"github.com/forkercat/autocat/internal/scheduler"
+	"github.com/forkercat/autocat/internal/security"
+	"github.com/forkercat/autocat/internal/session"
+	"github.com/forkercat/autocat/internal/tasks"
 )
 
 // Bot wraps a Telegram bot with Claude integration.
