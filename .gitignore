@@ -1,0 +1,9 @@
+data/
+.env
+*.db
+*.db-journal
+*.log
+.DS_Store
+autocat
+autocat-*
+.claude/

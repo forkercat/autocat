@@ -1,0 +1,21 @@
+[Unit]
+Description=AutoCat - Personal AI Assistant
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/autocat
+ExecStart=/home/ubuntu/autocat/autocat
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/ubuntu/autocat/.env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/autocat/data
+
+[Install]
+WantedBy=multi-user.target
