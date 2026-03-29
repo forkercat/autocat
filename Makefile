@@ -1,4 +1,4 @@
-.PHONY: build run dev clean test lint setup deploy
+.PHONY: build run dev clean test lint setup update deploy
 
 build:
 	CGO_ENABLED=1 go build -o autocat ./cmd/autocat
@@ -20,6 +20,10 @@ lint:
 
 setup:
 	bash scripts/setup.sh
+
+# Run on EC2 to pull latest code and restart the service
+update:
+	bash scripts/update.sh
 
 # Cross-compile for Linux ARM64 (EC2)
 build-linux-arm64:
