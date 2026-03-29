@@ -10,6 +10,7 @@ ExecStart=/home/ubuntu/autocat/autocat
 Restart=always
 RestartSec=10
 EnvironmentFile=/home/ubuntu/autocat/.env
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 # Security hardening
 NoNewPrivileges=true
