@@ -40,6 +40,9 @@ type Scheduler struct {
 	send   MessageSender
 	mu     sync.Mutex
 	jobs   map[int64]cron.EntryID // taskID -> cron entryID
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // New creates a new Scheduler. send may be nil and set later via SetSender.
@@ -50,12 +53,16 @@ func New(db *sql.DB, cfg *config.Config, send MessageSender) *Scheduler {
 		loc = time.UTC
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Scheduler{
-		cron: cron.New(cron.WithLocation(loc), cron.WithSeconds()),
-		db:   db,
-		cfg:  cfg,
-		send: send,
-		jobs: make(map[int64]cron.EntryID),
+		cron:   cron.New(cron.WithLocation(loc), cron.WithSeconds()),
+		db:     db,
+		cfg:    cfg,
+		send:   send,
+		jobs:   make(map[int64]cron.EntryID),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
@@ -84,10 +91,12 @@ func (s *Scheduler) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the scheduler.
+// Stop gracefully stops the scheduler and waits for running tasks to finish.
 func (s *Scheduler) Stop() {
-	ctx := s.cron.Stop()
-	<-ctx.Done()
+	s.cancel() // signal running tasks to stop
+	cronCtx := s.cron.Stop()
+	<-cronCtx.Done()
+	s.wg.Wait() // wait for in-flight task executions
 	log.Printf("[INFO] Scheduler stopped")
 }
 
@@ -169,6 +178,9 @@ func (s *Scheduler) scheduleTask(task Task) error {
 }
 
 func (s *Scheduler) executeTask(task Task) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+
 	log.Printf("[INFO] Executing scheduled task: %s", task.Name)
 	startedAt := time.Now().UnixMilli()
 
@@ -191,7 +203,7 @@ func (s *Scheduler) executeTask(task Task) {
 		memCtx,
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 	defer cancel()
 
 	resp, err := claude.Invoke(ctx, s.cfg, claude.InvokeOptions{
@@ -212,10 +224,12 @@ func (s *Scheduler) executeTask(task Task) {
 		}
 		log.Printf("[ERROR] Task %s failed: %s", task.Name, errMsg)
 
-		s.db.Exec(
+		if _, dbErr := s.db.Exec(
 			"UPDATE task_runs SET finished_at = ?, status = 'error', error = ? WHERE id = ?",
 			finishedAt, errMsg, runID,
-		)
+		); dbErr != nil {
+			log.Printf("[ERROR] Failed to update task_run %d to error: %v", runID, dbErr)
+		}
 		return
 	}
 
@@ -225,16 +239,20 @@ func (s *Scheduler) executeTask(task Task) {
 	}
 
 	// Update run record
-	s.db.Exec(
+	if _, err := s.db.Exec(
 		"UPDATE task_runs SET finished_at = ?, status = 'success', result = ? WHERE id = ?",
 		finishedAt, truncate(resp.Text, 1000), runID,
-	)
+	); err != nil {
+		log.Printf("[ERROR] Failed to update task_run %d to success: %v", runID, err)
+	}
 
 	// Update task last_run
-	s.db.Exec(
+	if _, err := s.db.Exec(
 		"UPDATE scheduled_tasks SET last_run = ?, updated_at = ? WHERE id = ?",
 		finishedAt, finishedAt, task.ID,
-	)
+	); err != nil {
+		log.Printf("[ERROR] Failed to update task %d last_run: %v", task.ID, err)
+	}
 
 	log.Printf("[INFO] Task %s completed in %dms", task.Name, finishedAt-startedAt)
 }

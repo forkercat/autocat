@@ -29,21 +29,16 @@ func SanitizeInput(input string) string {
 type RateLimiter struct {
 	mu      sync.Mutex
 	windows map[string][]time.Time
+	done    chan struct{}
 }
 
-// NewRateLimiter creates a new rate limiter.
+// NewRateLimiter creates a new rate limiter with background cleanup.
 func NewRateLimiter() *RateLimiter {
 	rl := &RateLimiter{
 		windows: make(map[string][]time.Time),
+		done:    make(chan struct{}),
 	}
-	// Periodic cleanup
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
-			rl.cleanup()
-		}
-	}()
+	go rl.cleanupLoop()
 	return rl
 }
 
@@ -69,6 +64,25 @@ func (rl *RateLimiter) Allow(userID string) bool {
 
 	rl.windows[userID] = append(valid, now)
 	return true
+}
+
+// Stop terminates the background cleanup goroutine.
+func (rl *RateLimiter) Stop() {
+	close(rl.done)
+}
+
+func (rl *RateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-rl.done:
+			return
+		case <-ticker.C:
+			rl.cleanup()
+		}
+	}
 }
 
 func (rl *RateLimiter) cleanup() {

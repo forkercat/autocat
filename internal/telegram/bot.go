@@ -30,6 +30,7 @@ type Bot struct {
 	rateLimiter *security.RateLimiter
 	mu          sync.Mutex
 	activeLocks map[string]bool // chatID -> processing
+	wg          sync.WaitGroup
 }
 
 // New creates a new Telegram bot.
@@ -76,6 +77,7 @@ func (b *Bot) SendMessage(chatID string, text string) error {
 }
 
 // Start begins listening for Telegram updates.
+// Blocks until ctx is cancelled. Waits for in-flight handlers before returning.
 func (b *Bot) Start(ctx context.Context) {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -86,14 +88,20 @@ func (b *Bot) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[INFO] Telegram bot stopping...")
+			log.Printf("[INFO] Telegram bot stopping, waiting for in-flight handlers...")
 			b.api.StopReceivingUpdates()
+			b.rateLimiter.Stop()
+			b.wg.Wait()
 			return
 		case update := <-updates:
 			if update.Message == nil {
 				continue
 			}
-			go b.handleMessage(ctx, update.Message)
+			b.wg.Add(1)
+			go func(msg *tgbotapi.Message) {
+				defer b.wg.Done()
+				b.handleMessage(ctx, msg)
+			}(update.Message)
 		}
 	}
 }
@@ -239,11 +247,17 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message, chatID, 
 		b.replyText(msg.Chat.ID, sb.String())
 
 	case "/status":
-		sess, _ := session.GetActive(b.db, chatID)
-		taskList, _ := b.scheduler.ListEnabled()
+		sessID := "(none)"
+		if sess, err := session.GetActive(b.db, chatID); err == nil && sess != nil {
+			sessID = sess.ID
+		}
+		taskCount := 0
+		if taskList, err := b.scheduler.ListEnabled(); err == nil {
+			taskCount = len(taskList)
+		}
 		b.replyText(msg.Chat.ID, fmt.Sprintf(
 			"Status:\n- Model: %s\n- Session: %s\n- Active tasks: %d\n- Timezone: %s",
-			b.cfg.ClaudeModel, sess.ID, len(taskList), b.cfg.Timezone,
+			b.cfg.ClaudeModel, sessID, taskCount, b.cfg.Timezone,
 		))
 
 	case "/help":
@@ -368,13 +382,14 @@ func splitMessage(text string, maxLen int) []string {
 			chunks = append(chunks, text)
 			break
 		}
-		// Try to split at newline
+		// Try to split at a newline within the chunk
 		idx := strings.LastIndex(text[:maxLen], "\n")
-		if idx < maxLen/2 {
+		if idx <= 0 {
+			// No good split point — hard cut at maxLen
 			idx = maxLen
 		}
 		chunks = append(chunks, text[:idx])
-		text = text[idx:]
+		text = strings.TrimLeft(text[idx:], "\n")
 	}
 	return chunks
 }

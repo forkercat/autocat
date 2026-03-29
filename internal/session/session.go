@@ -37,25 +37,34 @@ func GetActive(db *sql.DB, chatID string) (*Session, error) {
 }
 
 // Create starts a new session, ending any active ones for the chat.
+// Uses a transaction to ensure atomicity.
 func Create(db *sql.DB, chatID string) (*Session, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback() // no-op if already committed
+
 	now := time.Now().UnixMilli()
 	id := generateID(now)
 
 	// End existing active sessions
-	_, err := db.Exec(
+	if _, err := tx.Exec(
 		"UPDATE sessions SET status = 'ended', ended_at = ? WHERE chat_id = ? AND status = 'active'",
 		now, chatID,
-	)
-	if err != nil {
+	); err != nil {
 		return nil, fmt.Errorf("end active sessions: %w", err)
 	}
 
-	_, err = db.Exec(
+	if _, err := tx.Exec(
 		"INSERT INTO sessions (id, chat_id, started_at, status) VALUES (?, ?, ?, 'active')",
 		id, chatID, now,
-	)
-	if err != nil {
+	); err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit session: %w", err)
 	}
 
 	log.Printf("[INFO] New session created: %s for chat %s", id, chatID)
@@ -96,7 +105,10 @@ func EndAllActive(db *sql.DB) (int64, error) {
 }
 
 func generateID(ts int64) string {
-	b := make([]byte, 4)
-	_, _ = rand.Read(b)
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-only ID if crypto/rand fails
+		return fmt.Sprintf("session_%d", ts)
+	}
 	return fmt.Sprintf("session_%d_%s", ts, hex.EncodeToString(b))
 }
