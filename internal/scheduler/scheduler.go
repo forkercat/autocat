@@ -13,6 +13,7 @@ import (
 	"github.com/wjunhao/autocat/internal/claude"
 	"github.com/wjunhao/autocat/internal/config"
 	"github.com/wjunhao/autocat/internal/memory"
+	"github.com/wjunhao/autocat/internal/metrics"
 )
 
 // MessageSender is a function that sends a message to a chat.
@@ -181,6 +182,8 @@ func (s *Scheduler) executeTask(task Task) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 
+	m := metrics.Get()
+	m.TasksExecuted.Add(1)
 	log.Printf("[INFO] Executing scheduled task: %s", task.Name)
 	startedAt := time.Now().UnixMilli()
 
@@ -216,6 +219,7 @@ func (s *Scheduler) executeTask(task Task) {
 	finishedAt := time.Now().UnixMilli()
 
 	if err != nil || (resp != nil && resp.Error != "") {
+		m.TasksFailed.Add(1)
 		errMsg := ""
 		if err != nil {
 			errMsg = err.Error()

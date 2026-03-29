@@ -83,6 +83,11 @@ func parseCSV(s string) []string {
 	return result
 }
 
+// EnvOrDefault returns the value of an env var, or the fallback.
+func EnvOrDefault(key, fallback string) string {
+	return envOrDefault(key, fallback)
+}
+
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

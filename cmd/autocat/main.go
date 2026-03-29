@@ -12,6 +12,7 @@ import (
 	"github.com/wjunhao/autocat/internal/config"
 	"github.com/wjunhao/autocat/internal/db"
 	"github.com/wjunhao/autocat/internal/memory"
+	"github.com/wjunhao/autocat/internal/metrics"
 	"github.com/wjunhao/autocat/internal/scheduler"
 	"github.com/wjunhao/autocat/internal/session"
 	"github.com/wjunhao/autocat/internal/telegram"
@@ -57,6 +58,10 @@ func main() {
 		log.Fatalf("[FATAL] Scheduler error: %v", err)
 	}
 	defer sched.Stop()
+
+	// Start metrics/health HTTP server
+	metricsAddr := config.EnvOrDefault("METRICS_ADDR", ":9090")
+	metrics.StartServer(metricsAddr)
 
 	// Start daily reset routine
 	go dailyReset(ctx, cfg, database)

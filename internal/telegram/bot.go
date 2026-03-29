@@ -15,6 +15,7 @@ import (
 	"github.com/wjunhao/autocat/internal/claude"
 	"github.com/wjunhao/autocat/internal/config"
 	"github.com/wjunhao/autocat/internal/memory"
+	"github.com/wjunhao/autocat/internal/metrics"
 	"github.com/wjunhao/autocat/internal/scheduler"
 	"github.com/wjunhao/autocat/internal/security"
 	"github.com/wjunhao/autocat/internal/session"
@@ -110,15 +111,21 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	userID := msg.From.ID
 	chatID := strconv.FormatInt(msg.Chat.ID, 10)
 
+	userIDStr := strconv.FormatInt(userID, 10)
+	m := metrics.Get()
+	m.MessagesReceived.Add(1)
+
 	// Security: check allowlist
 	if !b.cfg.IsUserAllowed(userID) {
-		log.Printf("[WARN] Unauthorized message from user %d", userID)
+		m.Unauthorized.Add(1)
+		security.AuditLog(security.AuditUnauthorized, userIDStr, fmt.Sprintf("chatID=%s", chatID))
 		return
 	}
 
 	// Rate limiting
-	userIDStr := strconv.FormatInt(userID, 10)
 	if !b.rateLimiter.Allow(userIDStr) {
+		m.RateLimited.Add(1)
+		security.AuditLog(security.AuditRateLimited, userIDStr, "")
 		b.replyText(msg.Chat.ID, "Rate limit exceeded. Please wait a moment.")
 		return
 	}
@@ -130,6 +137,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	// Handle commands
 	if strings.HasPrefix(text, "/") {
+		security.AuditLog(security.AuditCommand, userIDStr, text)
 		b.handleCommand(ctx, msg, chatID, text)
 		return
 	}
@@ -325,6 +333,9 @@ func (b *Bot) handleChat(ctx context.Context, msg *tgbotapi.Message, chatID, tex
 	)
 
 	// Invoke Claude
+	m := metrics.Get()
+	m.ClaudeInvocations.Add(1)
+
 	opts := claude.DefaultMultiTurn(text, systemPrompt, "")
 	if sess.ClaudeSessionID.Valid {
 		opts.SessionID = sess.ClaudeSessionID.String
@@ -332,11 +343,13 @@ func (b *Bot) handleChat(ctx context.Context, msg *tgbotapi.Message, chatID, tex
 
 	resp, err := claude.Invoke(ctx, b.cfg, opts)
 	if err != nil {
+		m.ClaudeErrors.Add(1)
 		log.Printf("[ERROR] Claude invocation failed: %v", err)
 		b.replyText(msg.Chat.ID, "Sorry, I encountered an error. Please try again.")
 		return
 	}
 	if resp.Error != "" {
+		m.ClaudeErrors.Add(1)
 		log.Printf("[ERROR] Claude error: %s", resp.Error)
 		b.replyText(msg.Chat.ID, "Sorry, I encountered an error processing your request.")
 		return
@@ -351,6 +364,7 @@ func (b *Bot) handleChat(ctx context.Context, msg *tgbotapi.Message, chatID, tex
 	b.storeMessage(chatID, "assistant", b.cfg.AssistantName, resp.Text, "assistant", sess.ID)
 
 	// Send response
+	m.MessagesSent.Add(1)
 	b.SendMessage(chatID, resp.Text)
 }
 

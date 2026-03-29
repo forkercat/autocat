@@ -15,11 +15,12 @@ RUN CGO_ENABLED=1 go build -o autocat ./cmd/autocat
 FROM debian:bookworm-slim
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl && \
+    apt-get install -y --no-install-recommends ca-certificates curl nodejs npm && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Claude CLI
-RUN curl -fsSL https://claude.ai/install.sh | sh || true
+# Install Claude CLI — fail loudly if this doesn't work
+RUN npm install -g @anthropic-ai/claude-code && \
+    claude --version
 
 RUN useradd -m -s /bin/bash autocat
 USER autocat
