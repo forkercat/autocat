@@ -41,7 +41,7 @@ func Invoke(ctx context.Context, cfg *config.Config, opts InvokeOptions) (*Respo
 		args = append(args, "--resume", opts.SessionID)
 	}
 
-	args = append(args, "--prompt", opts.Prompt)
+	args = append(args, opts.Prompt)
 
 	timeout := opts.Timeout
 	if timeout == 0 {
